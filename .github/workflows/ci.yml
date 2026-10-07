@@ -1,0 +1,57 @@
+name: MAX Android CI
+on:
+  push:
+    branches: [main, ci/max-tests-actions]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze
+      - name: Unidades sin API real
+        shell: bash
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          flutter test --reporter=json | tee reports/android-unit.jsonl
+      - name: APK de pruebas internas (sin firma de distribución)
+        run: flutter build apk --debug --dart-define=API_BASE_URL=http://10.0.2.2:18080/api
+      - name: Reportes incluso ante fallo
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-reports-${{ github.sha }}
+          path: reports/
+          retention-days: 30
+      - name: Identificar artefacto interno
+        run: |
+          mkdir -p delivery
+          cp build/app/outputs/flutter-apk/app-debug.apk delivery/
+          printf '%s\n' "${GITHUB_SHA}" > delivery/commit.txt
+          (cd delivery && sha256sum *.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-internal-${{ github.sha }}
+          path: delivery/
+          retention-days: 14
