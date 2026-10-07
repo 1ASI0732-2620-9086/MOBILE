@@ -1,0 +1,37 @@
+name: MAX Delivery Candidate
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: ID de una ejecución aprobada de ci.yml en main
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.ci_run_id }}
+      ARTIFACT_PREFIX: android-internal
+    steps:
+      - name: Recuperar candidato elegible sin reconstruir
+        shell: bash
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > run.json
+          jq -e '.conclusion == "success" and .status == "completed" and .head_branch == "main" and .path == ".github/workflows/ci.yml" and (.event == "push" or .event == "workflow_dispatch")' run.json
+          SOURCE_SHA=$(jq -r '.head_sha' run.json)
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT_PREFIX-$SOURCE_SHA" --dir candidate
+          test "$(cat candidate/commit.txt)" = "$SOURCE_SHA"
+          (cd candidate && sha256sum --check SHA256SUMS)
+          cp run.json candidate/source-run.json
+          printf 'Preparado; publicación no ejecutada; requiere validación del ambiente.\n' > candidate/promotion-status.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: delivery-candidate-${{ inputs.ci_run_id }}
+          path: candidate/
+          retention-days: 14
